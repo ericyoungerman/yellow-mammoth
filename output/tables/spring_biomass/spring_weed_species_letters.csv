@@ -1,0 +1,5 @@
+"location","clover_species","biomass_type","n_whole_plots","mean_kg_ha","sd_kg_ha","se_kg_ha","p.value","letter","label_y"
+"Farm Hub","Mammoth red clover","Spring weed biomass",4,238.566666666667,75.5293320505352,37.7646660252676,0.705300657703979,"a",299.422872640447
+"Farm Hub","Yellow sweetclover","Spring weed biomass",4,260.8,55.6884987128302,27.8442493564151,0.705300657703979,"a",311.735789304928
+"Musgrave","Mammoth red clover","Spring weed biomass",4,364.45,217.845369930141,108.922684965071,0.00855632796199412,"a",511.242499762276
+"Musgrave","Yellow sweetclover","Spring weed biomass",4,149.23,105.973402323413,52.9867011617066,0.00855632796199412,"b",240.086515958912

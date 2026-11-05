@@ -1,0 +1,5 @@
+"location","clover_species","biomass_type","n_whole_plots","mean_kg_ha","sd_kg_ha","se_kg_ha","p.value","letter","label_y"
+"Farm Hub","Mammoth red clover","Spring legume biomass",4,949.75,160.527255099032,80.2636275495159,0.00319049883228019,"a",1112.41471775348
+"Farm Hub","Yellow sweetclover","Spring legume biomass",4,527.2,44.2656291712422,22.1328145856211,0.00319049883228019,"b",631.733904789582
+"Musgrave","Mammoth red clover","Spring legume biomass",4,1067.55,200.109376425327,100.054688212664,0.627830366843744,"a",1268.40524980908
+"Musgrave","Yellow sweetclover","Spring legume biomass",4,1113.07,293.874039910526,146.937019955263,0.627830366843744,"a",1360.80758155168

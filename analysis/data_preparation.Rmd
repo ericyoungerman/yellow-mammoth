@@ -1,0 +1,309 @@
+---
+title: "Yellow Mammoth: Data Preparation"
+author: "Sustainable Cropping Systems Lab"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+  github_document:
+    toc: true
+---
+
+## Purpose
+
+Import and validate the plot-level Yellow Mammoth workbook, standardize variables,
+and save a reproducible processed dataset. No statistical analyses are performed.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(here)
+library(readxl)
+library(dplyr)
+library(knitr)
+```
+
+## User-supplied measurement parameters
+
+The workbook records biomass per 0.5 m². The field protocol specifies two
+8.75-ft row transects for initial and final stands, and four 8.75-ft row
+transects for harvest stands and grain, all in 30-inch corn rows. These
+correspond to sampled ground areas of approximately 4.065 m² and 8.129 m², respectively.
+Grain was dried to approximately 0% moisture. Raw dry-grain yield is retained,
+and the primary grain-yield variable is adjusted to 15.5% moisture.
+
+```{r parameters}
+biomass_quadrat_m2 <- 0.5
+biomass_detection_limit_g <- 0.01
+biomass_trace_substitute_g <- biomass_detection_limit_g / 2
+
+# Corn row spacing at both sites.
+corn_row_spacing_in <- 30
+transect_length_ft <- 8.75
+initial_stand_n_transects <- 2
+final_stand_n_transects <- 2
+harvest_stand_n_transects <- 4
+grain_harvest_n_transects <- 4
+observed_grain_moisture_pct <- 0
+target_grain_moisture_pct <- 15.5
+
+# Exact mass/area conversion constants; shelled corn uses 56 lb per bushel.
+kg_per_lb <- 0.45359237
+m2_per_acre <- 4046.8564224
+acres_per_ha <- 10000 / m2_per_acre
+corn_lb_per_bu <- 56
+
+row_spacing_m <- corn_row_spacing_in * 0.0254
+transect_length_m <- transect_length_ft * 0.3048
+initial_stand_area_m2 <- initial_stand_n_transects * transect_length_m * row_spacing_m
+final_stand_area_m2 <- final_stand_n_transects * transect_length_m * row_spacing_m
+harvest_stand_area_m2 <- harvest_stand_n_transects * transect_length_m * row_spacing_m
+grain_harvest_area_m2 <- grain_harvest_n_transects * transect_length_m * row_spacing_m
+
+stopifnot(is.finite(biomass_quadrat_m2), biomass_quadrat_m2 > 0)
+optional_areas <- c(initial_stand_area_m2, final_stand_area_m2,
+                    harvest_stand_area_m2, grain_harvest_area_m2)
+stopifnot(all(is.na(optional_areas) | (is.finite(optional_areas) & optional_areas > 0)))
+stopifnot(is.finite(transect_length_ft), transect_length_ft > 0)
+stopifnot(observed_grain_moisture_pct >= 0, observed_grain_moisture_pct < 100,
+          target_grain_moisture_pct >= 0, target_grain_moisture_pct < 100)
+```
+
+## Import and verify structure
+
+Place the original workbook at `data/raw/combined_raw.xlsx` in the Git repository.
+Do not edit the raw workbook as part of this workflow.
+
+```{r import}
+raw_path <- here("data", "raw", "combined_raw.xlsx")
+stopifnot(file.exists(raw_path))
+
+raw <- readxl::read_excel(raw_path, sheet = 1)
+
+required_columns <- c(
+  "id", "location", "year", "block", "plot", "clover_species", "management",
+  "spring_weed_biomass_g_0_5m2", "spring_legume_biomass_g_0_5m2",
+  "initial_stand_count", "final_stand_count",
+  "peak_weed_biomass_g_0_5m2", "peak_legume_biomass_g_0_5m2",
+  "harvest_stand_count", "grain_weight_g"
+)
+missing_columns <- setdiff(required_columns, names(raw))
+if (length(missing_columns)) stop("Missing required columns: ", paste(missing_columns, collapse = ", "))
+if (!nrow(raw)) stop("The raw workbook has no observations.")
+
+unexpected_columns <- setdiff(names(raw), required_columns)
+if (length(unexpected_columns)) message("Additional columns retained: ",
+                                        paste(unexpected_columns, collapse = ", "))
+```
+
+## Standardize identifiers and treatment codes
+
+Species and management are separate experimental factors; retain each source
+code and the combined treatment. The `whole_plot_id` below assumes that clover
+species defines the whole-plot unit within each site-year and block. **Confirm
+this assignment against the randomization map before statistical modeling.**
+
+The combined IDs are convenience columns derived from the original design
+variables, not additional experimental factors. `site_year` combines location
+and year; `block_id` identifies blocks uniquely across site-years;
+`whole_plot_id` identifies the clover whole plots; and `plot_id` identifies
+individual subplots. Equivalent grouping variables can be constructed later
+inside analysis scripts.
+
+```{r standardize}
+numeric_columns <- c(
+  "spring_weed_biomass_g_0_5m2", "spring_legume_biomass_g_0_5m2",
+  "initial_stand_count", "final_stand_count", "peak_weed_biomass_g_0_5m2",
+  "peak_legume_biomass_g_0_5m2", "harvest_stand_count", "grain_weight_g"
+)
+biomass_columns <- c(
+  "spring_weed_biomass_g_0_5m2", "spring_legume_biomass_g_0_5m2",
+  "peak_weed_biomass_g_0_5m2", "peak_legume_biomass_g_0_5m2"
+)
+
+# Blank columns can be imported as logical, and numeric cells stored as
+# text can make a whole column character. Convert only after checking values.
+# Explicit missing-value codes: blanks, NA, and N/A (case-insensitive).
+# Other entries, including dashes and notes, require review rather than
+# silently becoming missing values.
+measurement_issues <- list()
+for (column in numeric_columns) {
+  values <- trimws(as.character(raw[[column]]))
+  missing <- is.na(values) | toupper(values) %in% c("", "NA", "N/A")
+  values[missing] <- NA_character_
+
+  if (column %in% biomass_columns) {
+    # Preserve source entries and distinguish trace biomass from true zeros.
+    raw[[paste0(column, "_raw")]] <- as.character(raw[[column]])
+    below_detection <- !missing & gsub("[[:space:]]", "", values) == "<0.01"
+    raw[[paste0(column, "_below_detection")]] <- ifelse(
+      missing, NA, below_detection
+    )
+    values[below_detection] <- as.character(biomass_trace_substitute_g)
+  }
+
+  converted <- suppressWarnings(as.numeric(values))
+  invalid <- !missing & (is.na(converted) | !is.finite(converted))
+
+  if (any(invalid)) {
+    measurement_issues[[column]] <- data.frame(
+      variable = column,
+      data_row = which(invalid),
+      id = as.character(raw$id[invalid]),
+      value = values[invalid],
+      stringsAsFactors = FALSE
+    )
+  }
+  raw[[column]] <- converted
+}
+
+if (length(measurement_issues)) {
+  issues <- do.call(rbind, measurement_issues)
+  details <- sprintf("%s | data row %s | id %s | value: %s",
+                     issues$variable, issues$data_row, issues$id,
+                     shQuote(issues$value))
+  stop("Measurement values could not be converted to finite numbers:\n",
+       paste(details, collapse = "\n"), call. = FALSE)
+}
+
+species_codes <- c("MRC", "YBSC")
+management_codes <- c("TILL", "ST", "V4IRM", "V4BOT", "BWBOT")
+if (anyNA(raw[c("location", "year", "block", "plot", "clover_species", "management")])) {
+  stop("Missing site, design, or treatment identifiers.")
+}
+if (!all(raw$clover_species %in% species_codes)) stop("Unrecognized clover species code.")
+if (!all(raw$management %in% management_codes)) stop("Unrecognized management code.")
+
+processed <- raw |>
+  dplyr::mutate(
+    location = tolower(trimws(as.character(location))),
+    year = as.integer(year),
+    block = as.integer(block),
+    plot = as.integer(plot),
+    clover_species_code = as.character(clover_species),
+    management_code = as.character(management),
+    clover_species = factor(clover_species_code, levels = species_codes,
+                            labels = c("Mammoth red clover", "Yellow sweetclover")),
+    management = factor(management_code, levels = management_codes,
+                        labels = c("Tillage", "Strip-till", "V4 inter-row mowing",
+                                   "V4 autonomous mowing", "Between-row autonomous mowing")),
+    site_year = paste(location, year, sep = "_"),
+    block_id = paste(site_year, block, sep = "_"),
+    whole_plot_id = paste(block_id, clover_species_code, sep = "_"),
+    plot_id = paste(block_id, plot, sep = "_"),
+    treatment = interaction(clover_species, management, sep = " + ", drop = TRUE)
+  ) |>
+  dplyr::rename(raw_id = id)
+
+if (anyDuplicated(processed$plot_id)) stop("Duplicate plot IDs within site-year/block.")
+if (anyNA(processed$year) || anyNA(processed$block) || anyNA(processed$plot)) {
+  stop("Year, block, or plot could not be converted to integer.")
+}
+```
+
+## Convert measured variables
+
+Biomass: grams per sampled area × 10,000 m²/ha ÷ 1,000 g/kg.
+Stand: counted plants × 10,000 m²/ha ÷ sampled area.
+Grain: grams × 10 ÷ harvested m² = kg/ha on the approximately 0%-moisture
+basis. Adjusted yield = dry-grain yield × (100 − observed moisture %) /
+(100 − target moisture %). For 0% to 15.5%, the factor is 1 / 0.845.
+
+Biomass and adjusted grain yield are also reported in lb/ac:
+kg/ha ÷ 0.45359237 ÷ acres per hectare. Corn yield in bu/ac uses
+56 lb per bushel: adjusted lb/ac ÷ 56.
+Both `grain_yield_lb_ac` and `grain_yield_bu_ac` retain the 15.5%-moisture basis.
+
+```{r conversions}
+g_to_kg_ha <- function(x, area_m2) {
+  if (is.na(area_m2)) return(rep(NA_real_, length(x)))
+  x * 10 / area_m2
+}
+count_to_plants_ha <- function(x, area_m2) {
+  if (is.na(area_m2)) return(rep(NA_real_, length(x)))
+  x * 10000 / area_m2
+}
+
+processed <- processed |>
+  dplyr::mutate(
+    spring_weed_biomass_kg_ha = g_to_kg_ha(spring_weed_biomass_g_0_5m2, biomass_quadrat_m2),
+    spring_legume_biomass_kg_ha = g_to_kg_ha(spring_legume_biomass_g_0_5m2, biomass_quadrat_m2),
+    peak_weed_biomass_kg_ha = g_to_kg_ha(peak_weed_biomass_g_0_5m2, biomass_quadrat_m2),
+    peak_legume_biomass_kg_ha = g_to_kg_ha(peak_legume_biomass_g_0_5m2, biomass_quadrat_m2),
+    initial_stand_plants_ha = count_to_plants_ha(initial_stand_count, initial_stand_area_m2),
+    final_stand_plants_ha = count_to_plants_ha(final_stand_count, final_stand_area_m2),
+    harvest_stand_plants_ha = count_to_plants_ha(harvest_stand_count, harvest_stand_area_m2),
+    grain_yield_dry_kg_ha = g_to_kg_ha(grain_weight_g, grain_harvest_area_m2),
+    grain_yield_kg_ha = grain_yield_dry_kg_ha *
+      (100 - observed_grain_moisture_pct) / (100 - target_grain_moisture_pct),
+    spring_weed_biomass_lb_ac = spring_weed_biomass_kg_ha / kg_per_lb / acres_per_ha,
+    spring_legume_biomass_lb_ac = spring_legume_biomass_kg_ha / kg_per_lb / acres_per_ha,
+    peak_weed_biomass_lb_ac = peak_weed_biomass_kg_ha / kg_per_lb / acres_per_ha,
+    peak_legume_biomass_lb_ac = peak_legume_biomass_kg_ha / kg_per_lb / acres_per_ha,
+    grain_yield_lb_ac = grain_yield_kg_ha / kg_per_lb / acres_per_ha,
+    grain_yield_bu_ac = grain_yield_lb_ac / corn_lb_per_bu
+  )
+```
+
+## Data validation
+
+Missing field measurements remain `NA`, rather than being converted to zero or
+silently dropped. Actual measured zeros remain zero. Weed and legume biomass entries of `<0.01`
+indicate biomass collected but below the 0.01-g detection limit for the entire
+0.5-m² sample. These use a documented half-limit substitute of 0.005 g
+(0.1 kg/ha) for conversion, not an exact measured weight. Original biomass entries
+are retained in columns ending in `_raw`; columns ending in `_below_detection`
+flag these substitutions (missing measurements have `NA` flags). Other text
+entries still require review. Report unexpected values and missingness without
+removing plots.
+
+```{r validation}
+if (any(processed[numeric_columns] < 0, na.rm = TRUE)) {
+  stop("Negative field measurements detected; inspect the raw workbook.")
+}
+count_columns <- c("initial_stand_count", "final_stand_count", "harvest_stand_count")
+if (any(vapply(processed[count_columns], function(x) any(x != floor(x), na.rm = TRUE), logical(1)))) {
+  stop("Non-integer plant stand count detected.")
+}
+
+missingness <- data.frame(
+  variable = numeric_columns,
+  missing_n = vapply(processed[numeric_columns], function(x) sum(is.na(x)), integer(1)),
+  observed_n = vapply(processed[numeric_columns], function(x) sum(!is.na(x)), integer(1))
+)
+knitr::kable(missingness, caption = "Missing observations in source measurements")
+
+design_check <- processed |>
+  dplyr::count(location, year, block, clover_species_code, management_code,
+               name = "n_plots")
+if (any(design_check$n_plots != 1)) {
+  stop("Duplicate species-management combinations within a site-year/block.")
+}
+knitr::kable(processed |>
+  dplyr::count(location, year, clover_species_code, management_code, name = "n_plots"),
+  caption = "Treatment coverage by site-year")
+
+# The currently observed design differs by location: do not require every
+# management treatment at every location when adding new site-years.
+knitr::kable(processed |>
+  dplyr::count(location, year, block, name = "n_plots"),
+  caption = "Plot counts by block")
+```
+
+## Export
+
+```{r export}
+processed_path <- here("data", "processed", "combined_processed.rds")
+dir.create(dirname(processed_path), recursive = TRUE, showWarnings = FALSE)
+saveRDS(processed, processed_path)
+message("Saved ", nrow(processed), " plots to ", processed_path)
+```
+
+## Future additions
+
+Append Wisconsin and other site-years as additional rows using the same core
+columns. Additional measurement columns are retained automatically. Update the
+allowed factor codes if new treatments are introduced; keep the raw workbook
+unchanged and rerun this document. If multiple quadrats or subsamples are added
+per plot, preserve their sampling IDs and process them separately rather than
+implicitly treating subsamples as independent plot replicates.

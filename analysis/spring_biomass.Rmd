@@ -1,0 +1,438 @@
+---
+title: "Yellow Mammoth: Spring Weed and Legume Biomass"
+author: "Sustainable Cropping Systems Lab"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+---
+
+## Purpose and experimental context
+
+Characterize spring weed and legume biomass **before management treatments were
+implemented**. Clover species was assigned to whole plots in a split-plot RCBD
+with four blocks per location. Musgrave has five subsequently assigned management
+subplots per whole plot; Farm Hub has three. All available spring observations
+are retained, but management assignments are **not** interpreted as treatment
+effects. Spring–peak relationships are intentionally outside this analysis.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(lmerTest)
+library(emmeans)
+library(DHARMa)
+
+figure_dir <- here("figures", "spring_biomass")
+table_dir <- here("output", "tables", "spring_biomass")
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
+
+theme_set(theme_classic(base_size = 16))
+
+species_colors <- c("Mammoth red clover" = "#C77C7D",
+                    "Yellow sweetclover" = "#E9E6BD")
+
+save_figure <- function(plot, filename, width, height) {
+  ggsave(file.path(figure_dir, filename), plot = plot,
+         width = width, height = height, units = "in", dpi = 300)
+}
+write_table <- function(data, filename) {
+  write.csv(data, file.path(table_dir, filename), row.names = FALSE, na = "")
+}
+```
+
+## Import and validation
+
+```{r import-validation}
+data_path <- here("data", "processed", "combined_processed.rds")
+stopifnot(file.exists(data_path))
+dat <- readRDS(data_path)
+
+required <- c("location", "year", "block", "plot_id", "block_id",
+              "whole_plot_id", "clover_species", "management",
+              "spring_weed_biomass_kg_ha", "spring_legume_biomass_kg_ha")
+missing_columns <- setdiff(required, names(dat))
+if (length(missing_columns)) stop("Missing columns: ", paste(missing_columns, collapse = ", "))
+if (anyDuplicated(dat$plot_id)) stop("Duplicate plot_id values detected.")
+if (anyNA(dat[c("location", "block_id", "whole_plot_id", "clover_species")]))
+  stop("Missing design identifiers.")
+if (any(!is.finite(dat$spring_weed_biomass_kg_ha[!is.na(dat$spring_weed_biomass_kg_ha)]) |
+        dat$spring_weed_biomass_kg_ha[!is.na(dat$spring_weed_biomass_kg_ha)] < 0) ||
+    any(!is.finite(dat$spring_legume_biomass_kg_ha[!is.na(dat$spring_legume_biomass_kg_ha)]) |
+        dat$spring_legume_biomass_kg_ha[!is.na(dat$spring_legume_biomass_kg_ha)] < 0))
+  stop("Spring biomass contains negative or non-finite recorded values.")
+
+# Add a row here when incorporating another location.
+expected_design <- tibble::tibble(
+  location_code = c("farmhub", "musgrave"),
+  location_label = c("Farm Hub", "Musgrave"),
+  n_blocks = c(4L, 4L),
+  n_subplots = c(3L, 5L)
+)
+if (anyNA(dat[c("spring_weed_biomass_kg_ha", "spring_legume_biomass_kg_ha")]))
+  stop("Complete spring biomass observations are required.")
+if (!setequal(unique(dat$location), expected_design$location_code))
+  stop("Locations do not match expected_design.")
+
+dat <- dat |>
+  mutate(location = factor(location, levels = expected_design$location_code,
+                           labels = expected_design$location_label),
+         clover_species = factor(as.character(clover_species),
+                                 levels = names(species_colors)))
+if (anyNA(dat$location) || anyNA(dat$clover_species))
+  stop("Unexpected location or clover species. Check factor levels.")
+
+design_counts <- dat |>
+  group_by(location, year, block_id, clover_species, whole_plot_id) |>
+  summarise(n_subplots = n(),
+            n_spring_weed = sum(!is.na(spring_weed_biomass_kg_ha)),
+            n_spring_legume = sum(!is.na(spring_legume_biomass_kg_ha)),
+            .groups = "drop")
+
+expected_subplots <- expected_design$n_subplots[
+  match(as.character(design_counts$location), expected_design$location_label)]
+if (any(design_counts$n_subplots != expected_subplots))
+  stop("Unexpected subplot count within a whole plot.")
+block_counts <- design_counts |>
+  group_by(location, year) |>
+  summarise(n_blocks = n_distinct(block_id), .groups = "drop")
+if (any(block_counts$n_blocks != expected_design$n_blocks[
+    match(as.character(block_counts$location), expected_design$location_label)]))
+  stop("Unexpected number of blocks per location and year.")
+species_counts <- design_counts |>
+  count(location, year, block_id, clover_species)
+if (any(species_counts$n != 1L) ||
+    nrow(species_counts) != sum(block_counts$n_blocks) * length(species_colors))
+  stop("Each block must contain one whole plot of each clover species.")
+if (any(design_counts |>
+        count(whole_plot_id) |>
+        pull(n) != 1)) stop("A whole-plot identifier spans multiple design groups.")
+
+knitr::kable(design_counts, caption = "Whole-plot structure and spring observations")
+write_table(design_counts, "spring_biomass_design_counts.csv")
+```
+
+The whole-plot identifier is constructed from location, year, block, and species
+in `data_preparation.Rmd` and has been verified against the field randomization
+maps. When Wisconsin data are incorporated, add its location label, block count,
+and subplot count to `expected_design`.
+
+## Whole-plot spring biomass summaries
+
+First average the observed subplots within each clover whole plot. Each of the
+four whole plots per species and location then contributes **one** observation
+to species-level means and SE. This avoids treating the three or five subplots
+as independent replicates of clover species.
+
+```{r whole-plot-summaries}
+whole_plot <- dat |>
+  group_by(location, year, block_id, whole_plot_id, clover_species) |>
+  summarise(
+    spring_weed_biomass_kg_ha = if (all(is.na(spring_weed_biomass_kg_ha)))
+      NA_real_ else mean(spring_weed_biomass_kg_ha, na.rm = TRUE),
+    spring_legume_biomass_kg_ha = if (all(is.na(spring_legume_biomass_kg_ha)))
+      NA_real_ else mean(spring_legume_biomass_kg_ha, na.rm = TRUE),
+    n_subplots = n(), .groups = "drop")
+
+spring_long <- whole_plot |>
+  pivot_longer(cols = c(spring_weed_biomass_kg_ha,
+                        spring_legume_biomass_kg_ha),
+               names_to = "biomass_type", values_to = "biomass_kg_ha") |>
+  mutate(biomass_type = factor(biomass_type,
+    levels = c("spring_legume_biomass_kg_ha", "spring_weed_biomass_kg_ha"),
+    labels = c("Spring legume biomass", "Spring weed biomass")))
+
+species_summary <- spring_long |>
+  group_by(location, clover_species, biomass_type) |>
+  summarise(n_whole_plots = sum(!is.na(biomass_kg_ha)),
+            mean_kg_ha = if (all(is.na(biomass_kg_ha))) NA_real_ else mean(biomass_kg_ha, na.rm = TRUE),
+            sd_kg_ha = sd(biomass_kg_ha, na.rm = TRUE),
+            se_kg_ha = sd_kg_ha / sqrt(n_whole_plots), .groups = "drop")
+
+knitr::kable(species_summary, digits = 1,
+             caption = "Raw whole-plot means ± SE (kg ha^-1)")
+write_table(whole_plot, "spring_biomass_whole_plot_means.csv")
+write_table(species_summary, "spring_biomass_species_summary.csv")
+```
+
+## Descriptive figures
+
+Error bars show raw SE among whole-plot means (not subplot SE or model-based
+uncertainty). Lowercase letters are added after model contrasts are calculated
+below. Individual whole-plot observations remain available in the tables and
+block-variability figure.
+
+```{r species-figures, fig.width=10, fig.height=6}
+species_plot <- function(biomass_label) {
+  pdat <- filter(species_summary, biomass_type == biomass_label)
+  ggplot(pdat, aes(x = clover_species, y = mean_kg_ha, fill = clover_species)) +
+    geom_col(width = 0.65, color = "black", linewidth = 0.3) +
+    geom_errorbar(aes(ymin = pmax(0, mean_kg_ha - se_kg_ha),
+                      ymax = mean_kg_ha + se_kg_ha), width = 0.17) +
+    facet_wrap(~location) +
+    scale_fill_manual(values = species_colors, drop = FALSE) +
+    scale_x_discrete(labels = c("Mammoth red clover" = "Mammoth red\nclover",
+                                "Yellow sweetclover" = "Yellow\nsweetclover")) +
+    labs(x = NULL, y = expression("Biomass (kg ha"^{-1}*")"),
+         title = biomass_label,
+         caption = paste(
+           "Bars show observed whole-plot means ± SE (n = 4 per species and location).\n",
+           "Lowercase letters: unadjusted model-based Fisher's LSD comparisons within locations."
+         )) +
+    theme(legend.position = "none",
+          axis.text.x = element_text(angle = 0, hjust = 0.5),
+          plot.caption = element_text(size = 11, hjust = 0.5,
+                                      margin = margin(t = 15)))
+}
+
+legume_fig <- species_plot("Spring legume biomass")
+weed_fig <- species_plot("Spring weed biomass")
+```
+
+## Mixed models: location and clover species
+
+Models use **whole-plot means** as observations. Location and species are fixed
+effects, and blocks nested within location are random intercepts. These models
+assess species, location, and their interaction, not management assignments.
+Because only four blocks are available per location, interpret model tests
+cautiously. Significant location-by-species interactions are followed by
+species comparisons within each location, using estimated marginal means.
+
+```{r models}
+fit_spring <- function(response) {
+  model_data <- whole_plot |>
+    filter(!is.na(.data[[response]])) |>
+    mutate(block_id = factor(block_id))
+  if (n_distinct(model_data$location) < 2 ||
+      n_distinct(model_data$clover_species) < 2)
+    stop("Both sites and both species are needed for the proposed model.")
+  formula <- as.formula(paste(response,
+    "~ location * clover_species + (1 | block_id)"))
+  lmerTest::lmer(formula, data = model_data, REML = TRUE)
+}
+
+legume_model <- fit_spring("spring_legume_biomass_kg_ha")
+weed_model <- fit_spring("spring_weed_biomass_kg_ha")
+
+# Type II tests with Satterthwaite denominator degrees of freedom.
+# Interpret main effects alongside the species-by-location interaction.
+legume_anova <- as.data.frame(anova(legume_model, type = 2, ddf = "Satterthwaite"))
+weed_anova <- as.data.frame(anova(weed_model, type = 2, ddf = "Satterthwaite"))
+legume_anova$term <- rownames(legume_anova)
+weed_anova$term <- rownames(weed_anova)
+knitr::kable(legume_anova, digits = 3, caption = "Spring legume biomass: Type II tests")
+knitr::kable(weed_anova, digits = 3, caption = "Spring weed biomass: Type II tests")
+write_table(legume_anova, "spring_legume_biomass_anova.csv")
+write_table(weed_anova, "spring_weed_biomass_anova.csv")
+```
+
+## Model diagnostics
+
+Convergence, singularity, variance components, conventional residual plots,
+and simulation-based checks are reported for **both** models. A singular fit
+is flagged rather than automatically treated as invalid. DHARMa tests are
+diagnostic aids and should be interpreted alongside the residual plots,
+especially with only 16 whole plots.
+
+```{r model-diagnostics, fig.width=10, fig.height=5}
+check_spring_model <- function(model, location_values) {
+  cat("Singular fit:", lme4::isSingular(model), "\n")
+  if (length(model@optinfo$conv$lme4$messages)) {
+    cat("Convergence messages:\n")
+    print(model@optinfo$conv$lme4$messages)
+  } else {
+    cat("No lme4 convergence messages.\n")
+  }
+  print(VarCorr(model))
+  set.seed(123)
+  simulated <- DHARMa::simulateResiduals(model, n = 1000)
+  plot(simulated)
+  print(DHARMa::testDispersion(simulated))
+  print(DHARMa::testUniformity(simulated))
+  print(DHARMa::testOutliers(simulated))
+  DHARMa::plotResiduals(simulated, form = location_values)
+  invisible(simulated)
+}
+
+```
+
+### Spring legume biomass
+
+```{r legume-diagnostics, fig.width=10, fig.height=5}
+legume_simulated <- check_spring_model(
+  legume_model,
+  model.frame(legume_model)$location)
+```
+
+### Spring weed biomass
+
+```{r weed-diagnostics, fig.width=10, fig.height=5}
+weed_simulated <- check_spring_model(
+  weed_model,
+  model.frame(weed_model)$location)
+
+```
+
+### Residual plots
+
+```{r residual-plots, fig.width=10, fig.height=5}
+diagnostics <- bind_rows(
+  data.frame(response = "Spring legume biomass", fitted = fitted(legume_model),
+             residual = resid(legume_model)),
+  data.frame(response = "Spring weed biomass", fitted = fitted(weed_model),
+             residual = resid(weed_model)))
+diagnostic_fig <- ggplot(diagnostics, aes(fitted, residual)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 2.5) + facet_wrap(~response, scales = "free") +
+  labs(x = expression("Fitted biomass (kg ha"^{-1}*")"),
+       y = expression("Residual (kg ha"^{-1}*")"))
+print(diagnostic_fig)
+save_figure(diagnostic_fig, "spring_biomass_model_residuals.png", 10, 5)
+
+qq_fig <- ggplot(diagnostics, aes(sample = residual)) +
+  stat_qq(size = 2) + stat_qq_line() +
+  facet_wrap(~response, scales = "free") +
+  labs(x = "Theoretical quantiles", y = "Sample residual quantiles")
+print(qq_fig)
+save_figure(qq_fig, "spring_biomass_residual_qq.png", 10, 5)
+```
+
+## Species comparisons within locations
+
+When the location-by-species interaction is significant, test the two species
+**within** each location rather than interpreting the species main effect in
+isolation. Following the Mowtivation convention, these are **unadjusted
+Fisher LSD-style comparisons** from the fitted mixed model (`adjust = "none"`).
+No Tukey adjustment is used. There is one species pair per location, but the
+two site-specific tests are not familywise-error controlled. Estimates and
+95% confidence intervals remain on the original kg ha^-1 scale. The contrast
+is mammoth red clover minus yellow sweetclover.
+
+```{r species-simple-effects, results="asis"}
+within_location <- function(model, label, filename) {
+  emm <- emmeans::emmeans(model, ~ clover_species | location,
+                          lmer.df = "satterthwaite")
+  comparisons <- emmeans::contrast(emm, method = "pairwise", by = "location")
+  contrast_table <- as.data.frame(summary(comparisons,
+                                           infer = c(TRUE, TRUE), adjust = "none"))
+  cat("\n\n### ", label, "\n\n", sep = "")
+  print(knitr::kable(contrast_table, digits = 3))
+  write_table(as.data.frame(summary(emm)),
+              sub("contrasts", "estimated_means", filename))
+  write_table(contrast_table, filename)
+  invisible(contrast_table)
+}
+
+legume_species_contrasts <- within_location(
+  legume_model, "Spring legume biomass", "spring_legume_species_contrasts.csv")
+weed_species_contrasts <- within_location(
+  weed_model, "Spring weed biomass", "spring_weed_species_contrasts.csv")
+```
+
+## Final species figures with lowercase letters
+
+Letters follow the unadjusted, model-based Fisher LSD-style species contrasts
+within each location at alpha = 0.05. The higher observed species mean receives
+`a`; if the difference is significant, the lower mean receives `b`, otherwise
+both receive `a`. Letters are not based on overlap of raw SE bars. The bar
+heights and error bars remain raw whole-plot mean ± SE.
+
+```{r final-species-figures, fig.width=10, fig.height=6}
+make_letters <- function(summary_data, contrasts_data) {
+  summary_data |>
+    left_join(contrasts_data |> select(location, p.value), by = "location") |>
+    group_by(location) |>
+    mutate(letter = if_else(p.value < 0.05 &
+                              mean_kg_ha < max(mean_kg_ha, na.rm = TRUE),
+                            "b", "a"),
+           label_y = mean_kg_ha + se_kg_ha +
+             0.08 * max(mean_kg_ha + se_kg_ha, na.rm = TRUE)) |>
+    ungroup()
+}
+
+legume_letters <- make_letters(
+  filter(species_summary, biomass_type == "Spring legume biomass"),
+  legume_species_contrasts)
+weed_letters <- make_letters(
+  filter(species_summary, biomass_type == "Spring weed biomass"),
+  weed_species_contrasts)
+
+legume_fig <- legume_fig +
+  geom_text(data = legume_letters, aes(x = clover_species, y = label_y,
+                                      label = letter), inherit.aes = FALSE,
+            size = 6, fontface = "bold") +
+  expand_limits(y = max(legume_letters$label_y) * 1.07)
+weed_fig <- weed_fig +
+  geom_text(data = weed_letters, aes(x = clover_species, y = label_y,
+                                    label = letter), inherit.aes = FALSE,
+            size = 6, fontface = "bold") +
+  expand_limits(y = max(weed_letters$label_y) * 1.07)
+
+print(legume_fig)
+print(weed_fig)
+save_figure(legume_fig, "spring_legume_biomass_by_species_location.png", 10, 6)
+save_figure(weed_fig, "spring_weed_biomass_by_species_location.png", 10, 6)
+write_table(legume_letters, "spring_legume_species_letters.csv")
+write_table(weed_letters, "spring_weed_species_letters.csv")
+```
+
+## Baseline variability across blocks and subplots
+
+This is a descriptive check for heterogeneity and unusual starting conditions.
+Subplot points are **not** independent clover species replicates. Management is
+not used as a predictor because treatment operations had not begun.
+
+```{r block-variability, fig.width=11, fig.height=7}
+subplot_long <- dat |>
+  select(plot_id, location, block_id, clover_species,
+         spring_weed_biomass_kg_ha, spring_legume_biomass_kg_ha) |>
+  pivot_longer(starts_with("spring_"), names_to = "biomass_type",
+               values_to = "biomass_kg_ha") |>
+  mutate(biomass_type = recode(biomass_type,
+    spring_weed_biomass_kg_ha = "Spring weed biomass",
+    spring_legume_biomass_kg_ha = "Spring legume biomass"),
+    block = sub("^.*_", "", block_id))
+
+block_fig <- ggplot(subplot_long,
+                    aes(x = factor(block), y = biomass_kg_ha,
+                        color = clover_species)) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.15,
+                                             dodge.width = 0.55), size = 2, alpha = 0.8) +
+  facet_grid(biomass_type ~ location, scales = "free_y") +
+  scale_color_manual(values = species_colors, drop = FALSE) +
+  labs(x = "Block", y = expression("Biomass (kg ha"^{-1}*")"),
+       color = "Clover species") +
+  theme(legend.position = "bottom")
+print(block_fig)
+save_figure(block_fig, "spring_biomass_subplot_variability_by_block.png", 11, 7)
+
+block_summary <- subplot_long |>
+  group_by(location, block, clover_species, biomass_type) |>
+  summarise(n_subplots = sum(!is.na(biomass_kg_ha)),
+            mean_kg_ha = if (all(is.na(biomass_kg_ha))) NA_real_ else mean(biomass_kg_ha, na.rm = TRUE),
+            sd_kg_ha = sd(biomass_kg_ha, na.rm = TRUE), .groups = "drop")
+knitr::kable(block_summary, digits = 1,
+             caption = "Descriptive subplot variability within blocks")
+write_table(block_summary, "spring_biomass_block_subplots_summary.csv")
+```
+
+## Interpretation notes
+
+- Species and location comparisons are based on whole plots, not subplot pseudoreplication.
+- No effects are attributed to management treatments assigned but not yet implemented.
+- Species differences in spring biomass reflect conditions following clover establishment;
+  they are not necessarily pretreatment covariates for species effects.
+- Review model residuals before formal interpretation. If assumptions are poor,
+  report descriptive results and reassess the model separately.
+- Peak biomass relationships and potential covariate adjustments are deferred.
+
+## Session information
+
+```{r session-info}
+sessionInfo()
+```
