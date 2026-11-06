@@ -1,0 +1,376 @@
+---
+title: "Yellow Mammoth: Corn Grain Yield (Musgrave 2026)"
+author: "Sustainable Cropping Systems Lab"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+---
+
+## Purpose and experimental design
+
+Corn grain yield was measured at Musgrave Research Farm in 2026 in a split-plot
+randomized complete block design with four blocks. Clover species (mammoth red
+clover and yellow sweetclover) was assigned to whole plots; management was
+assigned to subplots. The **core trial** compares Tillage, Strip-till, and V4
+inter-row mowing. The **mowing trial** compares four strip-till treatments:
+Strip-till, V4 inter-row mowing, V4 autonomous mowing, and Biweekly autonomous
+mowing (beginning at V4 and continuing every two weeks through VT).
+
+These two analyses share the Strip-till and V4 inter-row mowing observations;
+they are complementary comparisons, **not independent experiments**. Only
+Musgrave yield data are available at present. Grain weights were recorded after
+shelling and subsequent oven drying to near 0% moisture. Yield is reported at
+15.5% grain moisture, primarily in kg ha^-1, with bu ac^-1 for reference.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(here)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(lmerTest)
+library(emmeans)
+
+figure_dir <- here("figures", "corn_yield")
+table_dir <- here("output", "tables", "corn_yield")
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
+theme_set(theme_classic(base_size = 16))
+
+species_colors <- c("Mammoth red clover" = "#C77C7D",
+                    "Yellow sweetclover" = "#E9E6BD")
+core_levels <- c("Tillage", "Strip-till", "V4 inter-row mowing")
+mowing_levels <- c("Strip-till", "V4 inter-row mowing",
+                   "V4 autonomous mowing", "Biweekly autonomous mowing")
+all_levels <- c("Tillage", mowing_levels)
+save_figure <- function(p, name, width = 11, height = 6) {
+  ggsave(file.path(figure_dir, name), plot = p, width = width,
+         height = height, units = "in", dpi = 300)
+}
+write_table <- function(x, name) {
+  write.csv(as.data.frame(x), file.path(table_dir, name),
+            row.names = FALSE, na = "")
+}
+```
+
+## Data import and validation
+
+Four 8.75-ft harvest transects per subplot, each in a 30-in row, represent
+87.5 ft^2. Oven-dry grain weight is converted to dry yield per hectare, divided
+by 0.845 for yield at 15.5% moisture, and converted to bu ac^-1 using
+56 lb bu^-1 for shelled corn. The source data were processed previously; these
+calculations are checked here, not recomputed as analysis variables.
+
+```{r import-validation}
+path <- here("data", "processed", "combined_processed.rds")
+stopifnot(file.exists(path))
+dat <- readRDS(path)
+required <- c("location", "block_id", "whole_plot_id", "plot_id",
+              "clover_species", "management", "grain_weight_g",
+              "grain_yield_dry_kg_ha", "grain_yield_kg_ha",
+              "grain_yield_bu_ac")
+if (length(missing_columns <- setdiff(required, names(dat))))
+  stop("Missing columns: ", paste(missing_columns, collapse = ", "))
+
+musgrave <- dat |>
+  filter(as.character(location) == "musgrave") |>
+  mutate(clover_species = factor(as.character(clover_species),
+                                 levels = names(species_colors)),
+         management = factor(dplyr::recode(as.character(management),
+                   "Between-row autonomous mowing" = "Biweekly autonomous mowing"),
+                   levels = all_levels),
+         block_id = factor(block_id),
+         whole_plot_id = factor(whole_plot_id))
+
+if (nrow(musgrave) != 40 || anyDuplicated(musgrave$plot_id))
+  stop("Expected 40 unique Musgrave subplot records")
+if (anyNA(musgrave[required])) stop("Missing design or yield values at Musgrave")
+if (anyNA(musgrave[c("clover_species", "management")]))
+  stop("Unrecognized treatment level")
+yield_columns <- c("grain_weight_g", "grain_yield_dry_kg_ha",
+                   "grain_yield_kg_ha", "grain_yield_bu_ac")
+if (any(!is.finite(as.matrix(musgrave[yield_columns]))) ||
+    any(as.matrix(musgrave[yield_columns]) <= 0))
+  stop("Missing, nonfinite or nonpositive grain yield or grain weight")
+
+design <- musgrave |>
+  group_by(block_id, clover_species, whole_plot_id) |>
+  summarise(n_subplots = n(), n_treatments = n_distinct(management),
+            .groups = "drop")
+if (n_distinct(musgrave$block_id) != 4 || nrow(design) != 8 ||
+    any(design$n_subplots != 5) || any(design$n_treatments != 5) ||
+    any(design |> count(whole_plot_id) |> pull(n) != 1) ||
+    any(musgrave |> count(block_id, management) |> pull(n) != 2))
+  stop("Unexpected Musgrave split-plot assignment")
+
+harvest_area_m2 <- 4 * 8.75 * 2.5 * 0.09290304
+calculated_dry <- musgrave$grain_weight_g / 1000 / harvest_area_m2 * 10000
+calculated_155 <- calculated_dry / (1 - 0.155)
+calculated_bu_ac <- calculated_155 * 2.20462262185 /
+  2.47105381467 / 56
+if (!isTRUE(all.equal(musgrave$grain_yield_dry_kg_ha, calculated_dry,
+                      tolerance = 1e-5)) ||
+    !isTRUE(all.equal(musgrave$grain_yield_kg_ha, calculated_155,
+                      tolerance = 1e-5)) ||
+    !isTRUE(all.equal(musgrave$grain_yield_bu_ac, calculated_bu_ac,
+                      tolerance = 1e-5)))
+  stop("Yield conversions do not agree with oven-dry grain weight")
+
+core <- musgrave |>
+  filter(management %in% core_levels) |>
+  mutate(management = factor(as.character(management), levels = core_levels))
+mowing <- musgrave |>
+  filter(management %in% mowing_levels) |>
+  mutate(management = factor(as.character(management), levels = mowing_levels))
+stopifnot(nrow(core) == 24, nrow(mowing) == 32,
+          n_distinct(core$whole_plot_id) == 8,
+          n_distinct(mowing$whole_plot_id) == 8)
+knitr::kable(design, caption = "Musgrave whole-plot design check")
+write_table(design, "musgrave_yield_design.csv")
+```
+
+## Descriptive treatment summaries
+
+Tables and figures report **observed means ± raw standard errors**, with four
+blocks contributing one observation to each species × management combination.
+These are not model-estimated means.
+
+```{r descriptive-summaries}
+summarise_yield <- function(x) {
+  x |>
+    group_by(clover_species, management) |>
+    summarise(n = n(), mean_kg_ha = mean(grain_yield_kg_ha),
+              sd_kg_ha = sd(grain_yield_kg_ha),
+              se_kg_ha = sd_kg_ha / sqrt(n),
+              mean_bu_ac = mean(grain_yield_bu_ac),
+              se_bu_ac = sd(grain_yield_bu_ac) / sqrt(n),
+              .groups = "drop")
+}
+core_summary <- summarise_yield(core)
+mowing_summary <- summarise_yield(mowing)
+knitr::kable(core_summary, digits = 1,
+             caption = "Core trial: raw corn grain yield means and SE")
+knitr::kable(mowing_summary, digits = 1,
+             caption = "Mowing trial: raw corn grain yield means and SE")
+write_table(core_summary, "core_grain_yield_means.csv")
+write_table(mowing_summary, "mowing_grain_yield_means.csv")
+```
+
+## Descriptive figures
+
+The panels use the established clover colors and show raw means ± SE.
+Management labels remain horizontal. Statistical letters, if warranted, are
+reported separately with model-based comparisons rather than overlaid on raw
+descriptive summaries.
+
+```{r yield-figure-helper, include=FALSE}
+yield_figure <- function(x, plot_title) {
+  ggplot(x, aes(x = management, y = mean_kg_ha, fill = clover_species)) +
+    geom_col(position = position_dodge(width = .8), width = .7,
+             color = "black", linewidth = .3) +
+    geom_errorbar(aes(ymin = pmax(0, mean_kg_ha - se_kg_ha),
+                      ymax = mean_kg_ha + se_kg_ha),
+                  position = position_dodge(width = .8), width = .16) +
+    scale_fill_manual(values = species_colors) +
+    scale_x_discrete(labels = scales::label_wrap(17)) +
+    scale_y_continuous(expand = expansion(mult = c(0, .08))) +
+    labs(title = plot_title, x = NULL,
+         y = expression("Corn grain yield (kg ha"^{-1}*")"),
+         fill = "Clover species",
+         caption = "Observed treatment means ± raw SE (n = 4 blocks per cell); 15.5% moisture.") +
+    theme(axis.text.x = element_text(angle = 0, hjust = .5, size = 11),
+          legend.position = "bottom", plot.caption = element_text(size = 11))
+}
+```
+
+### Core trial: grain yield
+
+```{r core-yield-figure, fig.width=11, fig.height=6}
+core_fig <- yield_figure(core_summary, "Corn grain yield: Core trial")
+print(core_fig)
+save_figure(core_fig, "core_grain_yield.png", 11, 6)
+```
+
+### Mowing trial: grain yield
+
+```{r mowing-yield-figure, fig.width=12, fig.height=6}
+mowing_fig <- yield_figure(mowing_summary, "Corn grain yield: Mowing trial")
+print(mowing_fig)
+save_figure(mowing_fig, "mowing_grain_yield.png", 12, 6)
+```
+
+## Linear mixed models
+
+Initial models are Gaussian LMMs on untransformed grain yield (kg ha^-1).
+Species, management, and their interaction are fixed; block and the clover
+whole plot within block are random intercepts. `whole_plot_id` is unique
+across blocks, so `(1 | block_id) + (1 | whole_plot_id)` encodes the intended
+nesting. Sum-to-zero contrasts support Type III tests with the interaction
+included. No covariates or alternative distributions are considered unless
+diagnostics indicate a need.
+
+```{r model-helpers, include=FALSE}
+fit_yield_model <- function(x) {
+  contrasts(x$clover_species) <- contr.sum(nlevels(x$clover_species))
+  contrasts(x$management) <- contr.sum(nlevels(x$management))
+  lmerTest::lmer(grain_yield_kg_ha ~ clover_species * management +
+                   (1 | block_id) + (1 | whole_plot_id), data = x,
+                 REML = TRUE)
+}
+anova_table <- function(model) {
+  a <- as.data.frame(anova(model, type = 3, ddf = "Satterthwaite"))
+  data.frame(effect = rownames(a), a, row.names = NULL, check.names = FALSE)
+}
+```
+
+### Core trial: model and ANOVA
+
+```{r core-model}
+core_model <- fit_yield_model(core)
+core_anova <- anova_table(core_model)
+knitr::kable(core_anova, digits = 4,
+             caption = "Core trial: Type III ANOVA (Satterthwaite df)")
+write_table(core_anova, "core_yield_anova.csv")
+cat("Singular fit:", lme4::isSingular(core_model), "\n")
+print(summary(core_model))
+```
+
+### Core trial: diagnostics
+
+```{r core-diagnostics, fig.width=10, fig.height=4.5}
+core_diag <- data.frame(fitted = fitted(core_model),
+                        residual = resid(core_model))
+p_core_resid <- ggplot(core_diag, aes(fitted, residual)) +
+  geom_point(size = 2) + geom_hline(yintercept = 0, linetype = 2) +
+  labs(x = "Fitted grain yield (kg/ha)", y = "Residual (kg/ha)",
+       title = "Core: residuals vs fitted")
+p_core_qq <- ggplot(core_diag, aes(sample = residual)) +
+  stat_qq() + stat_qq_line() +
+  labs(title = "Core: residual Q-Q plot")
+print(p_core_resid)
+print(p_core_qq)
+save_figure(p_core_resid, "core_residuals.png", 7, 5)
+save_figure(p_core_qq, "core_qq.png", 7, 5)
+```
+
+### Mowing trial: model and ANOVA
+
+```{r mowing-model}
+mowing_model <- fit_yield_model(mowing)
+mowing_anova <- anova_table(mowing_model)
+knitr::kable(mowing_anova, digits = 4,
+             caption = "Mowing trial: Type III ANOVA (Satterthwaite df)")
+write_table(mowing_anova, "mowing_yield_anova.csv")
+cat("Singular fit:", lme4::isSingular(mowing_model), "\n")
+print(summary(mowing_model))
+```
+
+### Mowing trial: diagnostics
+
+```{r mowing-diagnostics, fig.width=10, fig.height=4.5}
+mowing_diag <- data.frame(fitted = fitted(mowing_model),
+                          residual = resid(mowing_model))
+p_mowing_resid <- ggplot(mowing_diag, aes(fitted, residual)) +
+  geom_point(size = 2) + geom_hline(yintercept = 0, linetype = 2) +
+  labs(x = "Fitted grain yield (kg/ha)", y = "Residual (kg/ha)",
+       title = "Mowing: residuals vs fitted")
+p_mowing_qq <- ggplot(mowing_diag, aes(sample = residual)) +
+  stat_qq() + stat_qq_line() +
+  labs(title = "Mowing: residual Q-Q plot")
+print(p_mowing_resid)
+print(p_mowing_qq)
+save_figure(p_mowing_resid, "mowing_residuals.png", 7, 5)
+save_figure(p_mowing_qq, "mowing_qq.png", 7, 5)
+```
+
+## Model-estimated means and post-hoc comparisons
+
+Model-based means are supplied for transparency, separately from the raw
+figures. If the species × management interaction is significant at alpha =
+0.05, compare management treatments *within each species*. Otherwise, compare
+the marginal management means only if the management main effect is significant,
+and marginal species means only if the species main effect is significant.
+Pairwise comparisons use **unadjusted Fisher's LSD-style p-values** (`adjust =
+"none"`), conditional on the relevant omnibus test. These comparisons are
+exploratory, not multiplicity-adjusted. Where comparisons are conducted, CLDs
+use lowercase letters with `a` assigned to the highest model mean; shared
+letters indicate that a difference was not detected, not equivalence.
+
+```{r comparison-helper, include=FALSE}
+get_p <- function(a, term) a[["Pr(>F)"]][match(term, a$effect)]
+report_emmeans <- function(model, a, prefix) {
+  cell_means <- as.data.frame(emmeans(model, ~ clover_species * management))
+  write_table(cell_means, paste0(prefix, "_cell_emmeans.csv"))
+  knitr::kable(cell_means, digits = 2,
+               caption = paste(prefix, "model-estimated species × management means")) |>
+    print()
+
+  interaction_p <- get_p(a, "clover_species:management")
+  management_p <- get_p(a, "management")
+  species_p <- get_p(a, "clover_species")
+  if (is.na(interaction_p) || is.na(management_p) || is.na(species_p))
+    stop("Could not locate fixed-effect p-values in ANOVA table")
+
+  if (interaction_p < .05) {
+    emm <- emmeans(model, ~ management | clover_species)
+    pairs_out <- as.data.frame(pairs(emm, adjust = "none"))
+    write_table(pairs_out, paste0(prefix, "_management_within_species_LSD.csv"))
+    print(knitr::kable(pairs_out, digits = 3,
+           caption = paste(prefix, "management comparisons within species (unadjusted)")))
+    if (requireNamespace("multcomp", quietly = TRUE) &&
+        requireNamespace("multcompView", quietly = TRUE)) {
+      letters_out <- as.data.frame(multcomp::cld(
+        emm, adjust = "none", Letters = letters, sort = TRUE, reversed = TRUE))
+      write_table(letters_out, paste0(prefix, "_management_within_species_CLD.csv"))
+      print(knitr::kable(letters_out, digits = 2,
+             caption = paste(prefix, "within-species LSD letter groupings")))
+    } else cat("Install multcomp and multcompView to obtain CLD letters.\n")
+  } else {
+    cat("Species × management interaction not significant; examining marginal effects.\n")
+    if (management_p < .05) {
+      emm <- emmeans(model, ~ management)
+      pairs_out <- as.data.frame(pairs(emm, adjust = "none"))
+      write_table(pairs_out, paste0(prefix, "_management_LSD.csv"))
+      print(knitr::kable(pairs_out, digits = 3,
+             caption = paste(prefix, "management comparisons (unadjusted)")))
+      if (requireNamespace("multcomp", quietly = TRUE) &&
+          requireNamespace("multcompView", quietly = TRUE)) {
+        letters_out <- as.data.frame(multcomp::cld(
+          emm, adjust = "none", Letters = letters, sort = TRUE, reversed = TRUE))
+        write_table(letters_out, paste0(prefix, "_management_CLD.csv"))
+        print(knitr::kable(letters_out, digits = 2,
+               caption = paste(prefix, "management LSD letter groupings")))
+      } else cat("Install multcomp and multcompView to obtain CLD letters.\n")
+    } else cat("Management main effect not significant; no management post-hoc tests.\n")
+    if (species_p < .05) {
+      emm <- emmeans(model, ~ clover_species)
+      pairs_out <- as.data.frame(pairs(emm, adjust = "none"))
+      write_table(pairs_out, paste0(prefix, "_species_LSD.csv"))
+      print(knitr::kable(pairs_out, digits = 3,
+             caption = paste(prefix, "clover species comparison (unadjusted)")))
+    } else cat("Clover species main effect not significant.\n")
+  }
+}
+```
+
+### Core trial: estimated means and comparisons
+
+```{r core-comparisons}
+report_emmeans(core_model, core_anova, "core")
+```
+
+### Mowing trial: estimated means and comparisons
+
+```{r mowing-comparisons}
+report_emmeans(mowing_model, mowing_anova, "mowing")
+```
+
+## Preliminary interpretation
+
+The figures present treatment means without inferential annotation. Interpret
+the ANOVA and any model-based post-hoc comparisons only after reviewing the
+diagnostic plots, checking convergence and singularity, and confirming that the
+Gaussian error assumption is reasonable. With one site-year, results apply to
+Musgrave 2026; additional site-years can be incorporated in a subsequent
+analysis without altering this preliminary record.
