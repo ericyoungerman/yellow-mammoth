@@ -1,0 +1,17 @@
+"location","clover_species","management","weed_below_detection","legume_below_detection"
+"Farm Hub","Mammoth red clover","Tillage",0,0
+"Farm Hub","Mammoth red clover","Strip-till",0,0
+"Farm Hub","Mammoth red clover","V4 inter-row mowing",0,0
+"Farm Hub","Yellow sweetclover","Tillage",0,0
+"Farm Hub","Yellow sweetclover","Strip-till",0,0
+"Farm Hub","Yellow sweetclover","V4 inter-row mowing",0,0
+"Musgrave","Mammoth red clover","Tillage",0,0
+"Musgrave","Mammoth red clover","Strip-till",0,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing",0,0
+"Musgrave","Mammoth red clover","V4 autonomous mowing",0,0
+"Musgrave","Mammoth red clover","Between-row autonomous mowing",0,0
+"Musgrave","Yellow sweetclover","Tillage",1,0
+"Musgrave","Yellow sweetclover","Strip-till",0,0
+"Musgrave","Yellow sweetclover","V4 inter-row mowing",0,0
+"Musgrave","Yellow sweetclover","V4 autonomous mowing",0,1
+"Musgrave","Yellow sweetclover","Between-row autonomous mowing",0,0

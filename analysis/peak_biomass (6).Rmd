@@ -1,0 +1,422 @@
+---
+title: "Yellow Mammoth: Peak Weed Biomass and Legume Biomass"
+author: "Sustainable Cropping Systems Lab"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+---
+
+## Purpose and experimental design
+
+Peak biomass was measured after management treatments were implemented in a
+split-plot randomized complete block design (four blocks per location). Clover
+species was assigned to whole plots and management to subplots.
+
+The **core trial** includes Tillage, Strip-till, and V4 inter-row mowing at
+Musgrave and Farm Hub. The **Musgrave mowing trial** compares four strip-till
+management treatments, excluding Tillage. Biweekly autonomous mowing began at
+V4 and continued every two weeks through VT. These analyses share observations
+and are not independent experiments. Spring biomass is **not included**.
+Legume biomass was measured during peak weed sampling, not necessarily at peak
+legume growth.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(lmerTest)
+library(glmmTMB)
+library(emmeans)
+library(DHARMa)
+
+figure_dir <- here("figures", "peak_biomass")
+table_dir <- here("output", "tables", "peak_biomass")
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
+theme_set(theme_classic(base_size = 16))
+
+species_colors <- c("Mammoth red clover" = "#C77C7D",
+                    "Yellow sweetclover" = "#E9E6BD")
+core_levels <- c("Tillage", "Strip-till", "V4 inter-row mowing")
+mowing_levels <- c("Strip-till", "V4 inter-row mowing",
+                   "V4 autonomous mowing", "Biweekly autonomous mowing")
+all_levels <- c("Tillage", mowing_levels)
+save_figure <- function(p, name, width = 11, height = 6) {
+  ggsave(file.path(figure_dir, name), plot = p,
+         width = width, height = height, units = "in", dpi = 300)
+}
+write_table <- function(x, name) {
+  write.csv(as.data.frame(x), file.path(table_dir, name),
+            row.names = FALSE, na = "")
+}
+```
+
+## Import and validation
+
+```{r import}
+path <- here("data", "processed", "combined_processed.rds")
+stopifnot(file.exists(path))
+dat <- readRDS(path)
+required <- c("location", "block_id", "whole_plot_id", "plot_id",
+              "clover_species", "management", "peak_weed_biomass_kg_ha",
+              "peak_legume_biomass_kg_ha",
+              "peak_weed_biomass_g_0_5m2_below_detection")
+if (length(setdiff(required, names(dat))))
+  stop("Missing fields: ", paste(setdiff(required, names(dat)), collapse = ", "))
+if (anyDuplicated(dat$plot_id)) stop("Duplicate subplot identifiers")
+if (anyNA(dat[required])) stop("Missing design or outcome values")
+for (response in c("peak_weed_biomass_kg_ha", "peak_legume_biomass_kg_ha")) {
+  if (any(!is.finite(dat[[response]]) | dat[[response]] < 0))
+    stop("Invalid biomass values: ", response)
+}
+
+dat <- dat |>
+  mutate(location = factor(as.character(location),
+                           levels = c("farmhub", "musgrave"),
+                           labels = c("Farm Hub", "Musgrave")),
+         clover_species = factor(as.character(clover_species),
+                                 levels = names(species_colors)),
+         management = factor(dplyr::recode(as.character(management),
+                    "Between-row autonomous mowing" = "Biweekly autonomous mowing"),
+                    levels = all_levels),
+         block_id = factor(block_id),
+         whole_plot_id = factor(whole_plot_id))
+if (anyNA(dat[c("location", "clover_species", "management")]))
+  stop("Unrecognized treatment or location level")
+
+design <- dat |>
+  group_by(location, block_id, clover_species, whole_plot_id) |>
+  summarise(n_subplots = n(), .groups = "drop")
+if (nrow(design) != 16 ||
+    any(design$n_subplots != ifelse(design$location == "Musgrave", 5, 3)) ||
+    any(design |> count(whole_plot_id) |> pull(n) != 1))
+  stop("Unexpected split-plot structure")
+core <- dat |>
+  filter(management %in% core_levels) |>
+  mutate(management = droplevels(management),
+         block_id = droplevels(block_id),
+         whole_plot_id = droplevels(whole_plot_id))
+tool <- dat |>
+  filter(location == "Musgrave", management %in% mowing_levels) |>
+  mutate(location = droplevels(location),
+         management = droplevels(management),
+         block_id = droplevels(block_id),
+         whole_plot_id = droplevels(whole_plot_id))
+stopifnot(nrow(core) == 48, nrow(tool) == 32,
+          n_distinct(core$whole_plot_id) == 16,
+          n_distinct(tool$whole_plot_id) == 8)
+knitr::kable(design, caption = "Whole-plot design and subplot counts")
+write_table(design, "peak_biomass_design.csv")
+```
+
+## Descriptive treatment means
+
+Within each location × species × management cell, four blocks supply four
+subplot observations. Tables and figures show **raw means ± SE**, not
+model-estimated means. Species effects are tested using the whole-plot
+randomization in the models below.
+
+```{r summaries}
+summarize_biomass <- function(x) {
+  x |>
+    pivot_longer(c(peak_weed_biomass_kg_ha, peak_legume_biomass_kg_ha),
+                 names_to = "response", values_to = "biomass_kg_ha") |>
+    group_by(location, clover_species, management, response) |>
+    summarise(n = n(), mean_kg_ha = mean(biomass_kg_ha),
+              sd_kg_ha = sd(biomass_kg_ha),
+              se_kg_ha = sd_kg_ha / sqrt(n),
+              n_zero = sum(biomass_kg_ha == 0), .groups = "drop")
+}
+core_summary <- summarize_biomass(core)
+tool_summary <- summarize_biomass(tool)
+knitr::kable(core_summary, digits = 1, caption = "Core trial: observed biomass")
+knitr::kable(tool_summary, digits = 1, caption = "Musgrave mowing trial: observed biomass")
+write_table(core_summary, "core_peak_biomass_means.csv")
+write_table(tool_summary, "musgrave_tool_peak_biomass_means.csv")
+```
+
+## Descriptive figures
+
+Each figure has its own chunk and export. Only the specified response is
+plotted; error bars represent mean ± raw SE for that response.
+
+```{r figure-helper, include=FALSE}
+biomass_figure <- function(x, response_name, plot_title, by_location = TRUE) {
+  pdat <- x |> filter(.data$response == .env$response_name)
+  if (!nrow(pdat) || any(as.character(pdat$response) != response_name))
+    stop("Unexpected response in figure: ", response_name)
+  p <- ggplot(pdat,
+              aes(management, mean_kg_ha, fill = clover_species)) +
+    geom_col(position = position_dodge(width = .8), width = .7,
+             color = "black", linewidth = .3) +
+    geom_errorbar(aes(ymin = pmax(0, mean_kg_ha - se_kg_ha),
+                      ymax = mean_kg_ha + se_kg_ha),
+                  position = position_dodge(width = .8), width = .16) +
+    scale_fill_manual(values = species_colors) +
+    scale_x_discrete(labels = function(x) gsub(" ", "\n", x, fixed = TRUE)) +
+    labs(title = plot_title,
+         x = NULL, y = expression("Biomass (kg ha"^{-1}*")"),
+         fill = "Clover species",
+         caption = "Observed treatment means ± raw SE (n = 4 blocks per cell).") +
+    theme(axis.text.x = element_text(angle = 0, hjust = .5, size = 11),
+          legend.position = "bottom", plot.caption = element_text(size = 11))
+  if (by_location) p <- p + facet_wrap(~location, scales = "free_y")
+  p
+}
+```
+
+### Core trial: peak weed biomass
+
+```{r core-weed-figure, fig.width=12, fig.height=6}
+core_weed_fig <- biomass_figure(core_summary, "peak_weed_biomass_kg_ha",
+                               "Peak weed biomass: Core trial")
+print(core_weed_fig)
+save_figure(core_weed_fig, "core_peak_weed_biomass.png", 12, 6)
+```
+
+### Core trial: legume biomass
+
+```{r core-legume-figure, fig.width=12, fig.height=6}
+core_legume_fig <- biomass_figure(core_summary, "peak_legume_biomass_kg_ha",
+                                 "Legume biomass: Core trial")
+print(core_legume_fig)
+save_figure(core_legume_fig, "core_peak_legume_biomass.png", 12, 6)
+```
+
+### Musgrave mowing trial: peak weed biomass
+
+```{r tool-weed-figure, fig.width=12, fig.height=6}
+tool_weed_fig <- biomass_figure(tool_summary, "peak_weed_biomass_kg_ha",
+                               "Peak weed biomass: Musgrave mowing trial", FALSE)
+print(tool_weed_fig)
+save_figure(tool_weed_fig, "musgrave_tool_peak_weed_biomass.png", 12, 6)
+```
+
+### Musgrave mowing trial: legume biomass
+
+```{r tool-legume-figure, fig.width=12, fig.height=6}
+tool_legume_fig <- biomass_figure(tool_summary, "peak_legume_biomass_kg_ha",
+                                 "Legume biomass: Musgrave mowing trial", FALSE)
+print(tool_legume_fig)
+save_figure(tool_legume_fig, "musgrave_tool_peak_legume_biomass.png", 12, 6)
+```
+
+## Mixed models
+
+One initial model is fitted for each response × trial combination (four total).
+Weed biomass is modeled with a log-Gaussian LMM.
+Legume biomass has many exact zeros and is modeled with a Tweedie GLMM
+(`1 < p < 2`, log link). These are **initial** models, subject to diagnostics.
+
+The core weed analysis retains all 48 observations for descriptive statistics,
+but excludes one below-detection-limit observation (Musgrave plot 310,
+`<0.01 g`, represented as 0.1 kg ha^-1) for the preliminary log-Gaussian
+inference model. The original 48-observation model is retained as a sensitivity
+check; both models led to the same conclusions for the tested effects. The
+three-way location × species × management interaction was also examined using
+an ML likelihood-ratio test and was not supported (p = 0.487). The reduced
+two-way-interaction model is retained.
+
+Because legume biomass has near-complete
+zeros in some combinations, its preliminary model is deliberately additive;
+species × management interactions can be considered if supported later.
+Random intercepts represent blocks and species whole plots nested within blocks.
+The identifiers `block_id` and `whole_plot_id` are unique across locations;
+therefore `(1 | block_id) + (1 | whole_plot_id)` specifies the intended nesting
+without needing to repeat the block identifier in the whole-plot term.
+
+```{r models}
+core_weed_model <- lmerTest::lmer(
+  log(peak_weed_biomass_kg_ha) ~
+    location * clover_species + location * management +
+    clover_species * management +
+    (1 | block_id) + (1 | whole_plot_id), data = core)
+core_weed_sensitivity_data <- core |>
+  filter(!peak_weed_biomass_g_0_5m2_below_detection)
+stopifnot(nrow(core_weed_sensitivity_data) == 47)
+core_weed_reference <- update(core_weed_model,
+                              data = core_weed_sensitivity_data)
+tool_weed_model <- lmerTest::lmer(
+  log(peak_weed_biomass_kg_ha) ~ clover_species * management +
+    (1 | block_id) + (1 | whole_plot_id), data = tool)
+core_legume_model <- glmmTMB::glmmTMB(
+  peak_legume_biomass_kg_ha ~ location + clover_species + management +
+    (1 | block_id) + (1 | whole_plot_id),
+  family = glmmTMB::tweedie(link = "log"), data = core)
+tool_legume_model <- glmmTMB::glmmTMB(
+  peak_legume_biomass_kg_ha ~ clover_species + management +
+    (1 | block_id) + (1 | whole_plot_id),
+  family = glmmTMB::tweedie(link = "log"), data = tool)
+
+```
+
+## Core trial: weed biomass
+
+### Diagnostics
+
+The reference analysis uses 47 observations; the original 48-observation
+model is retained above for sensitivity comparison. Model diagnostics refer
+to the 47-observation reference fit.
+
+```{r diagnostic-functions, include=FALSE}
+model_ok <- function(m) {
+  if (inherits(m, "glmmTMB")) {
+    v <- tryCatch(vcov(m)$cond, error = function(e) NULL)
+    return(isTRUE(m$sdr$pdHess) && isTRUE(m$fit$convergence == 0) &&
+             !is.null(v) && all(is.finite(v)))
+  }
+  !lme4::isSingular(m) && !length(m@optinfo$conv$lme4$messages)
+}
+show_diagnostics <- function(m) {
+  cat("Convergence/covariance checks passed:", model_ok(m), "\n")
+  print(summary(m))
+  print(VarCorr(m))
+  set.seed(123)
+  sim <- tryCatch(DHARMa::simulateResiduals(m, n = 1000),
+                  error = function(e) {
+                    cat("Simulation unavailable:", conditionMessage(e), "\n")
+                    NULL
+                  })
+  if (!is.null(sim)) {
+    plot(sim)
+    print(DHARMa::testUniformity(sim))
+    print(DHARMa::testDispersion(sim))
+    print(DHARMa::testOutliers(sim))
+  }
+}
+```
+
+```{r core-weed-diagnostics, fig.width=10, fig.height=6}
+show_diagnostics(core_weed_reference)
+```
+
+### ANOVA and within-location management comparisons
+
+The location × management interaction is significant. Consequently,
+management contrasts are evaluated **within location**, averaged across clover
+species. Comparisons are unadjusted Fisher LSD-style (`adjust = "none"`) and
+use Satterthwaite degrees of freedom. Contrasts are estimated on the log scale;
+raw arithmetic treatment means ± SE are reported in the descriptive figures.
+
+```{r core-weed-inference, results='asis'}
+core_weed_anova <- as.data.frame(anova(core_weed_reference, type = 2,
+                                       ddf = "Satterthwaite"))
+core_weed_anova$term <- rownames(core_weed_anova)
+rownames(core_weed_anova) <- NULL
+core_weed_anova <- core_weed_anova[, c("term", setdiff(names(core_weed_anova), "term"))]
+knitr::kable(core_weed_anova, digits = 4,
+             caption = "Core weed biomass: Type II tests (47 observations)")
+write_table(core_weed_anova, "core_weed_anova.csv")
+
+core_weed_emm <- emmeans::emmeans(core_weed_reference,
+                                  ~ management | location,
+                                  lmer.df = "satterthwaite")
+core_weed_contrasts <- as.data.frame(summary(
+  pairs(core_weed_emm, adjust = "none"),
+  infer = c(TRUE, TRUE), adjust = "none"))
+knitr::kable(core_weed_contrasts, digits = 3,
+             caption = "Core weed biomass: unadjusted management comparisons within location (log scale)")
+write_table(core_weed_contrasts, "core_weed_management_contrasts.csv")
+write_table(as.data.frame(summary(core_weed_emm)),
+            "core_weed_estimated_means.csv")
+```
+
+## Core trial: legume biomass (preliminary)
+
+Legume biomass was sampled during peak weed assessment. Of 48 core-trial
+observations, many are zero, reflecting both clover termination in tilled
+plots and limited persistence in some strip-till plots. The preliminary
+additive Tweedie model estimates effects of location, species, and management
+on expected legume biomass. It does not test their interactions; interpret
+its effects as exploratory, alongside the raw treatment summaries.
+
+```{r core-legume-diagnostics, fig.width=10, fig.height=6}
+show_diagnostics(core_legume_model)
+```
+
+```{r core-legume-anova, results='asis'}
+if (!requireNamespace("car", quietly = TRUE)) stop("Install 'car' for Tweedie tests")
+if (model_ok(core_legume_model)) {
+  core_legume_anova <- as.data.frame(car::Anova(core_legume_model, type = 2))
+  core_legume_anova$term <- rownames(core_legume_anova)
+  rownames(core_legume_anova) <- NULL
+  core_legume_anova <- core_legume_anova[, c("term", setdiff(names(core_legume_anova), "term"))]
+  knitr::kable(core_legume_anova, digits = 3,
+               caption = "Core legume biomass: preliminary Type II Wald tests")
+  write_table(core_legume_anova, "core_legume_anova.csv")
+} else {
+  cat("Tweedie model inference withheld pending diagnostic review.\n")
+}
+```
+
+The preliminary model indicates differences by location, clover species,
+and management. The management result is expected to be strongly influenced
+by the tilled reference, where clover was intentionally terminated. No
+post-hoc treatment letters are assigned to this zero-heavy response.
+
+## Musgrave mowing trial: weed biomass (preliminary)
+
+The full split-plot model converges but is singular because the whole-plot
+variance is estimated as zero. This is flagged for review rather than silently
+removing a random effect or automatically reporting treatment p-values.
+
+```{r mowing-weed-diagnostics, fig.width=10, fig.height=6}
+show_diagnostics(tool_weed_model)
+```
+
+```{r mowing-weed-status}
+cat("Singular fit:", lme4::isSingular(tool_weed_model), "\n")
+cat("Inferential tests deferred pending random-effects review.\n")
+```
+
+## Musgrave mowing trial: legume biomass (preliminary)
+
+All four treatments retain the strip-till system; none deliberately terminate
+the entire clover understory. The Tweedie model assesses species and mowing
+management additively. Its results should be interpreted cautiously because
+yellow sweetclover biomass was near zero in most plots.
+
+```{r mowing-legume-diagnostics, fig.width=10, fig.height=6}
+show_diagnostics(tool_legume_model)
+```
+
+```{r mowing-legume-anova, results='asis'}
+if (model_ok(tool_legume_model)) {
+  tool_legume_anova <- as.data.frame(car::Anova(tool_legume_model, type = 2))
+  tool_legume_anova$term <- rownames(tool_legume_anova)
+  rownames(tool_legume_anova) <- NULL
+  tool_legume_anova <- tool_legume_anova[, c("term", setdiff(names(tool_legume_anova), "term"))]
+  knitr::kable(tool_legume_anova, digits = 3,
+               caption = "Musgrave legume biomass: preliminary Type II Wald tests")
+  write_table(tool_legume_anova, "musgrave_mowing_legume_anova.csv")
+} else {
+  cat("Tweedie model inference withheld pending diagnostic review.\n")
+}
+```
+
+The preliminary model indicates a species effect, with much greater retained
+biomass under mammoth red clover, but no detected overall effect of mowing
+management. This is not evidence that mowing strategies are equivalent.
+The descriptive figure and zero counts remain the clearest summary for now;
+we do not perform additional pairwise tests or assign significance letters.
+
+## Interpretation notes
+
+- Core and tool results share Musgrave observations; they are complementary.
+- Blocks and whole plots are distinct experimental units, not interchangeable
+  subplot replicates.
+- In the core trial, legume zeros after Tillage reflect intended clover removal;
+  zeros in strip-till treatments may reflect loss of persistence.
+- Inspect diagnostics before retaining models, reporting formal conclusions,
+  or adding model-based lowercase significance letters to raw-mean figures.
+- Wisconsin requires updating design validation and reviewing the model structure.
+
+## Session information
+
+```{r session-info}
+sessionInfo()
+```

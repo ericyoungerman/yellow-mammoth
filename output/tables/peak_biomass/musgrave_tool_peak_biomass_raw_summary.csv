@@ -1,0 +1,21 @@
+"location","clover_species","management","response","n","mean_kg_ha","sd_kg_ha","se_kg_ha","median_kg_ha","n_zero"
+"Musgrave","Mammoth red clover","Tillage","peak_legume_biomass_kg_ha",4,2.05,4.1,2.05,0,3
+"Musgrave","Mammoth red clover","Tillage","peak_weed_biomass_kg_ha",4,125.3,118.512727867798,59.2563639338988,115,0
+"Musgrave","Mammoth red clover","Strip-till","peak_legume_biomass_kg_ha",4,342.35,201.039390833405,100.519695416703,287.6,0
+"Musgrave","Mammoth red clover","Strip-till","peak_weed_biomass_kg_ha",4,445.65,276.486159991177,138.243079995588,379.4,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,754.3,886.899535836313,443.449767918156,418.1,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,943.05,925.585441761051,462.792720880526,638.3,0
+"Musgrave","Mammoth red clover","V4 autonomous mowing","peak_legume_biomass_kg_ha",4,662.3,717.242357923736,358.621178961868,398.7,0
+"Musgrave","Mammoth red clover","V4 autonomous mowing","peak_weed_biomass_kg_ha",4,512.45,318.89418830285,159.447094151425,506.9,0
+"Musgrave","Mammoth red clover","Between-row autonomous mowing","peak_legume_biomass_kg_ha",4,377,412.654884053652,206.327442026826,270.8,0
+"Musgrave","Mammoth red clover","Between-row autonomous mowing","peak_weed_biomass_kg_ha",4,254.95,121.237329234852,60.6186646174262,295.5,0
+"Musgrave","Yellow sweetclover","Tillage","peak_legume_biomass_kg_ha",4,0,0,0,0,4
+"Musgrave","Yellow sweetclover","Tillage","peak_weed_biomass_kg_ha",4,76.825,63.9658437501349,31.9829218750674,82.6,0
+"Musgrave","Yellow sweetclover","Strip-till","peak_legume_biomass_kg_ha",4,3.3,6.6,3.3,0,3
+"Musgrave","Yellow sweetclover","Strip-till","peak_weed_biomass_kg_ha",4,1032.15,802.645482140154,401.322741070077,757,0
+"Musgrave","Yellow sweetclover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,0,0,0,0,4
+"Musgrave","Yellow sweetclover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,960.5,388.379968587465,194.189984293732,963.1,0
+"Musgrave","Yellow sweetclover","V4 autonomous mowing","peak_legume_biomass_kg_ha",4,3.075,6.08351597899329,3.04175798949664,0.05,2
+"Musgrave","Yellow sweetclover","V4 autonomous mowing","peak_weed_biomass_kg_ha",4,706.3,455.451087750741,227.725543875371,776.5,0
+"Musgrave","Yellow sweetclover","Between-row autonomous mowing","peak_legume_biomass_kg_ha",4,3.85,6.67607669218981,3.3380383460949,0.8,2
+"Musgrave","Yellow sweetclover","Between-row autonomous mowing","peak_weed_biomass_kg_ha",4,490.95,238.297258342041,119.14862917102,463.2,0

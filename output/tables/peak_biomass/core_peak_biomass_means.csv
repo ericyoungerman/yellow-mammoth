@@ -1,0 +1,25 @@
+"location","clover_species","management","response","n","mean_kg_ha","sd_kg_ha","se_kg_ha","n_zero"
+"Farm Hub","Mammoth red clover","Tillage","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Farm Hub","Mammoth red clover","Tillage","peak_weed_biomass_kg_ha",4,5245.1,2124.98114501439,1062.49057250719,0
+"Farm Hub","Mammoth red clover","Strip-till","peak_legume_biomass_kg_ha",4,93.2,182.026591463995,91.0132957319973,2
+"Farm Hub","Mammoth red clover","Strip-till","peak_weed_biomass_kg_ha",4,7789.6,3360.27798453243,1680.13899226622,0
+"Farm Hub","Mammoth red clover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,7.2,14.4,7.2,3
+"Farm Hub","Mammoth red clover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,5263.65,1422.44488469677,711.222442348384,0
+"Farm Hub","Yellow sweetclover","Tillage","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Farm Hub","Yellow sweetclover","Tillage","peak_weed_biomass_kg_ha",4,5782.5,1244.80422557123,622.402112785617,0
+"Farm Hub","Yellow sweetclover","Strip-till","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Farm Hub","Yellow sweetclover","Strip-till","peak_weed_biomass_kg_ha",4,7628.55,2236.40492681148,1118.20246340574,0
+"Farm Hub","Yellow sweetclover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Farm Hub","Yellow sweetclover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,6970.1,2747.17354627139,1373.5867731357,0
+"Musgrave","Mammoth red clover","Tillage","peak_legume_biomass_kg_ha",4,2.05,4.1,2.05,3
+"Musgrave","Mammoth red clover","Tillage","peak_weed_biomass_kg_ha",4,125.3,118.512727867798,59.2563639338988,0
+"Musgrave","Mammoth red clover","Strip-till","peak_legume_biomass_kg_ha",4,342.35,201.039390833405,100.519695416703,0
+"Musgrave","Mammoth red clover","Strip-till","peak_weed_biomass_kg_ha",4,445.65,276.486159991177,138.243079995588,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,754.3,886.899535836313,443.449767918156,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,943.05,925.585441761051,462.792720880526,0
+"Musgrave","Yellow sweetclover","Tillage","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Musgrave","Yellow sweetclover","Tillage","peak_weed_biomass_kg_ha",4,76.825,63.9658437501349,31.9829218750674,0
+"Musgrave","Yellow sweetclover","Strip-till","peak_legume_biomass_kg_ha",4,3.3,6.6,3.3,3
+"Musgrave","Yellow sweetclover","Strip-till","peak_weed_biomass_kg_ha",4,1032.15,802.645482140154,401.322741070077,0
+"Musgrave","Yellow sweetclover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Musgrave","Yellow sweetclover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,960.5,388.379968587465,194.189984293732,0

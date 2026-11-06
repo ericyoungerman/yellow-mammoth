@@ -1,0 +1,17 @@
+"location","clover_species","management","response","n","mean_kg_ha","sd_kg_ha","se_kg_ha","n_zero"
+"Musgrave","Mammoth red clover","Strip-till","peak_legume_biomass_kg_ha",4,342.35,201.039390833405,100.519695416703,0
+"Musgrave","Mammoth red clover","Strip-till","peak_weed_biomass_kg_ha",4,445.65,276.486159991177,138.243079995588,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,754.3,886.899535836313,443.449767918156,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,943.05,925.585441761051,462.792720880526,0
+"Musgrave","Mammoth red clover","V4 autonomous mowing","peak_legume_biomass_kg_ha",4,662.3,717.242357923736,358.621178961868,0
+"Musgrave","Mammoth red clover","V4 autonomous mowing","peak_weed_biomass_kg_ha",4,512.45,318.89418830285,159.447094151425,0
+"Musgrave","Mammoth red clover","Biweekly autonomous mowing","peak_legume_biomass_kg_ha",4,377,412.654884053652,206.327442026826,0
+"Musgrave","Mammoth red clover","Biweekly autonomous mowing","peak_weed_biomass_kg_ha",4,254.95,121.237329234852,60.6186646174262,0
+"Musgrave","Yellow sweetclover","Strip-till","peak_legume_biomass_kg_ha",4,3.3,6.6,3.3,3
+"Musgrave","Yellow sweetclover","Strip-till","peak_weed_biomass_kg_ha",4,1032.15,802.645482140154,401.322741070077,0
+"Musgrave","Yellow sweetclover","V4 inter-row mowing","peak_legume_biomass_kg_ha",4,0,0,0,4
+"Musgrave","Yellow sweetclover","V4 inter-row mowing","peak_weed_biomass_kg_ha",4,960.5,388.379968587465,194.189984293732,0
+"Musgrave","Yellow sweetclover","V4 autonomous mowing","peak_legume_biomass_kg_ha",4,3.075,6.08351597899329,3.04175798949664,2
+"Musgrave","Yellow sweetclover","V4 autonomous mowing","peak_weed_biomass_kg_ha",4,706.3,455.451087750741,227.725543875371,0
+"Musgrave","Yellow sweetclover","Biweekly autonomous mowing","peak_legume_biomass_kg_ha",4,3.85,6.67607669218981,3.3380383460949,2
+"Musgrave","Yellow sweetclover","Biweekly autonomous mowing","peak_weed_biomass_kg_ha",4,490.95,238.297258342041,119.14862917102,0

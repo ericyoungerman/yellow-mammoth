@@ -1,0 +1,17 @@
+"location","clover_species","management","n","weed_missing","legume_missing","weed_zeros","legume_zeros"
+"Farm Hub","Mammoth red clover","Tillage",4,0,0,0,4
+"Farm Hub","Mammoth red clover","Strip-till",4,0,0,0,2
+"Farm Hub","Mammoth red clover","V4 inter-row mowing",4,0,0,0,3
+"Farm Hub","Yellow sweetclover","Tillage",4,0,0,0,4
+"Farm Hub","Yellow sweetclover","Strip-till",4,0,0,0,4
+"Farm Hub","Yellow sweetclover","V4 inter-row mowing",4,0,0,0,4
+"Musgrave","Mammoth red clover","Tillage",4,0,0,0,3
+"Musgrave","Mammoth red clover","Strip-till",4,0,0,0,0
+"Musgrave","Mammoth red clover","V4 inter-row mowing",4,0,0,0,0
+"Musgrave","Mammoth red clover","V4 autonomous mowing",4,0,0,0,0
+"Musgrave","Mammoth red clover","Between-row autonomous mowing",4,0,0,0,0
+"Musgrave","Yellow sweetclover","Tillage",4,0,0,0,4
+"Musgrave","Yellow sweetclover","Strip-till",4,0,0,0,3
+"Musgrave","Yellow sweetclover","V4 inter-row mowing",4,0,0,0,4
+"Musgrave","Yellow sweetclover","V4 autonomous mowing",4,0,0,0,2
+"Musgrave","Yellow sweetclover","Between-row autonomous mowing",4,0,0,0,2
